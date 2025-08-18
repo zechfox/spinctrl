@@ -1,14 +1,14 @@
 # SpinCtrl
 
-A Rust and Bash utility for controlling Acer Spin 13 Chromebook features.
+A Rust and Bash utility for controlling Acer Spin 713 Chromebook features.
 
 ## Overview
 
-SpinCtrl provides system-level control and automation for Acer Spin 13 Chromebook hardware features, including display rotation, keyboard/touchpad management, and other device-specific functionality.
+SpinCtrl provides system-level control and automation for Acer Spin 713 Chromebook hardware features, including display rotation, keyboard/touchpad management, and other device-specific functionality.
 
 ## Features
 
-- Hardware control interface for Acer Spin 13
+- Hardware control interface for Acer Spin 713
 - System automation scripts
 - Cross-platform compatibility where applicable
 
@@ -63,5 +63,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Compatibility
 
 Designed specifically for:
-- Acer Spin 13 Chromebook
+- Acer Spin 713 Chromebook
 - ChromeOS and Linux environments
