@@ -1,0 +1,32 @@
+[package]
+name = "spinctrl-tui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal User Interface for SpinCtrl system control tool"
+
+[[bin]]
+name = "spinctrl"
+path = "src/main.rs"
+
+[dependencies]
+# Essential workspace dependencies
+tokio = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+notify = { workspace = true }
+
+# Local dependencies
+shared = { path = "../shared" }
+
+# Workspace deps used directly by the TUI (already compiled via shared)
+chrono = { workspace = true }
+
+[lints]
+workspace = true
