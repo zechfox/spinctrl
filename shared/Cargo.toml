@@ -1,0 +1,26 @@
+[package]
+name = "shared"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared types and utilities for SpinCtrl"
+
+[lib]
+name = "shared"
+path = "src/lib.rs"
+
+[dependencies]
+# Essential dependencies for shared library
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+nix = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
