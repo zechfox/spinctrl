@@ -44,3 +44,5 @@ pids
 # System files
 .directory
 desktop.ini
+# OpenCode session files
+.omo/
