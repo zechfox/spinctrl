@@ -1,0 +1,45 @@
+[Unit]
+Description=SpinCtrl Hardware Management Service
+Documentation=https://github.com/user/spinctrl
+After=multi-user.target network.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/spinctrl-service
+Restart=always
+RestartSec=5
+User=root
+Group=spinctrl
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/spinctrl /sys/class/power_supply /proc /dev
+PrivateTmp=true
+ProtectKernelTunables=false
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictSUIDSGID=true
+
+# Create spinctrl group and setup IPC directory
+ExecStartPre=/bin/bash -c 'getent group spinctrl >/dev/null || groupadd -r spinctrl'
+ExecStartPre=/bin/mkdir -p /var/lib/spinctrl
+ExecStartPre=/bin/chown root:spinctrl /var/lib/spinctrl
+ExecStartPre=/bin/chmod 750 /var/lib/spinctrl
+
+# Clean up on stop
+ExecStopPost=/bin/rm -f /var/lib/spinctrl/status.json
+ExecStopPost=/bin/rm -f /var/lib/spinctrl/commands.fifo
+
+# Environment
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
