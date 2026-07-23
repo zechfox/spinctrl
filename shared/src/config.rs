@@ -27,9 +27,9 @@ pub struct BatteryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CpuConfig {
     /// CPU governor when AC adapter is connected
-    pub governor_ac: String,
+    pub governor_ac: CpuGovernor,
     /// CPU governor when running on battery
-    pub governor_battery: String,
+    pub governor_battery: CpuGovernor,
     /// Minimum CPU frequency in kHz (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_freq_khz: Option<u32>,
@@ -66,6 +66,73 @@ pub enum ThermalProfile {
     Custom,
 }
 
+/// The five standard Linux cpufreq governors. Serializes as the lowercase
+/// snake_case name (`"performance"`, `"powersave"`, …) for wire-format
+/// compatibility with the existing `config.json`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum StandardGovernor {
+    Performance,
+    Powersave,
+    Ondemand,
+    Conservative,
+    Schedutil,
+}
+
+impl StandardGovernor {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Performance => "performance",
+            Self::Powersave => "powersave",
+            Self::Ondemand => "ondemand",
+            Self::Conservative => "conservative",
+            Self::Schedutil => "schedutil",
+        }
+    }
+}
+
+/// A CPU governor value. Known governors deserialize to the [`StandardGovernor`]
+/// set; anything else falls back to [`CpuGovernor::Custom`] so unknown sysfs
+/// governors (e.g. `userspace`, `interactive`) round-trip without data loss.
+///
+/// Serializes back to a plain string, so the JSON shape is unchanged:
+/// `"performance"` ↔ `CpuGovernor::Standard(StandardGovernor::Performance)`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(untagged)]
+pub enum CpuGovernor {
+    Standard(StandardGovernor),
+    Custom(String),
+}
+
+impl CpuGovernor {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Standard(s) => s.as_str(),
+            Self::Custom(s) => s,
+        }
+    }
+}
+
+impl std::fmt::Display for CpuGovernor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for CpuGovernor {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "performance" => Self::Standard(StandardGovernor::Performance),
+            "powersave" => Self::Standard(StandardGovernor::Powersave),
+            "ondemand" => Self::Standard(StandardGovernor::Ondemand),
+            "conservative" => Self::Standard(StandardGovernor::Conservative),
+            "schedutil" => Self::Standard(StandardGovernor::Schedutil),
+            other => Self::Custom(other.to_string()),
+        })
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -98,10 +165,10 @@ impl CpuConfig {
     /// the range logic unit-testable without real hardware/sysfs.
     fn validate_with_available(&self, available: Option<&[u32]>) -> Vec<String> {
         let mut errors = Vec::new();
-        if self.governor_ac.is_empty() {
+        if self.governor_ac.as_str().is_empty() {
             errors.push("AC governor cannot be empty".to_string());
         }
-        if self.governor_battery.is_empty() {
+        if self.governor_battery.as_str().is_empty() {
             errors.push("Battery governor cannot be empty".to_string());
         }
         if let (Some(min), Some(max)) = (self.min_freq_khz, self.max_freq_khz) {
@@ -183,8 +250,8 @@ impl Default for BatteryConfig {
 impl Default for CpuConfig {
     fn default() -> Self {
         Self {
-            governor_ac: "performance".to_string(),
-            governor_battery: "powersave".to_string(),
+            governor_ac: CpuGovernor::Standard(StandardGovernor::Performance),
+            governor_battery: CpuGovernor::Standard(StandardGovernor::Powersave),
             min_freq_khz: None,
             max_freq_khz: None,
         }
@@ -284,26 +351,29 @@ impl Config {
     /// (space-separated); falls back to the built-in list if the sysfs path is
     /// unreadable (non-Linux, no cpufreq support, or the TUI user lacks read
     /// access) so validation never falsely rejects a real governor.
-    pub fn get_available_governors() -> Vec<String> {
+    pub fn get_available_governors() -> Vec<CpuGovernor> {
         const SYSFS_GOVERNORS: &str = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors";
         if let Ok(content) = std::fs::read_to_string(SYSFS_GOVERNORS) {
-            let governors: Vec<String> = content.split_whitespace().map(|s| s.to_string()).collect();
+            let governors: Vec<CpuGovernor> = content
+                .split_whitespace()
+                .map(|s| s.parse().unwrap_or(CpuGovernor::Custom(s.to_string())))
+                .collect();
             if !governors.is_empty() {
                 return governors;
             }
         }
         vec![
-            "performance".to_string(),
-            "powersave".to_string(),
-            "ondemand".to_string(),
-            "conservative".to_string(),
-            "schedutil".to_string(),
+            CpuGovernor::Standard(StandardGovernor::Performance),
+            CpuGovernor::Standard(StandardGovernor::Powersave),
+            CpuGovernor::Standard(StandardGovernor::Ondemand),
+            CpuGovernor::Standard(StandardGovernor::Conservative),
+            CpuGovernor::Standard(StandardGovernor::Schedutil),
         ]
     }
     
-    /// Check if a governor is valid
-    pub fn is_valid_governor(governor: &str) -> bool {
-        Self::get_available_governors().contains(&governor.to_string())
+    /// Check if a governor is valid (present in the available list)
+    pub fn is_valid_governor(governor: &CpuGovernor) -> bool {
+        Self::get_available_governors().contains(governor)
     }
 }
 
@@ -315,8 +385,8 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.battery.threshold, 80);
-        assert_eq!(config.cpu.governor_ac, "performance");
-        assert_eq!(config.cpu.governor_battery, "powersave");
+        assert_eq!(config.cpu.governor_ac, CpuGovernor::Standard(StandardGovernor::Performance));
+        assert_eq!(config.cpu.governor_battery, CpuGovernor::Standard(StandardGovernor::Powersave));
         assert_eq!(config.thermal.warn_temp, 70);
         assert!(config.validate().is_ok());
     }
@@ -403,27 +473,25 @@ mod tests {
     #[test]
     fn test_governor_validation_empty_ac() {
         let mut config = Config::default();
-        config.cpu.governor_ac = String::new();
+        config.cpu.governor_ac = CpuGovernor::Custom(String::new());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_governor_validation_empty_battery() {
         let mut config = Config::default();
-        config.cpu.governor_battery = String::new();
+        config.cpu.governor_battery = CpuGovernor::Custom(String::new());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_is_valid_governor_accepts_returned_rejects_fake() {
-        // sysfs-dependent, so check that a returned governor validates and an
-        // obviously-fake one is rejected, rather than asserting specific names.
         let available = Config::get_available_governors();
         assert!(!available.is_empty());
         let any_valid = available.iter().any(|g| Config::is_valid_governor(g));
         assert!(any_valid, "a returned governor should be valid: {:?}", available);
-        assert!(!Config::is_valid_governor("definitely_not_a_real_governor_xyz"));
-        assert!(!Config::is_valid_governor(""));
+        assert!(!Config::is_valid_governor(&CpuGovernor::Custom("definitely_not_a_real_governor_xyz".to_string())));
+        assert!(!Config::is_valid_governor(&CpuGovernor::Custom(String::new())));
     }
 
     #[test]
@@ -543,8 +611,55 @@ mod tests {
 
     #[test]
     fn test_available_cpu_frequencies_is_callable_or_none() {
-        // Don't assert specific values (sysfs is environment-dependent), only
-        // that the function is callable and returns Option without panicking.
         let _ = available_cpu_frequencies();
+    }
+
+    #[test]
+    fn test_cpu_governor_serde_roundtrip_standard() {
+        let json = serde_json::to_string(&CpuGovernor::Standard(StandardGovernor::Performance)).unwrap();
+        assert_eq!(json, "\"performance\"");
+        let back: CpuGovernor = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, CpuGovernor::Standard(StandardGovernor::Performance));
+    }
+
+    #[test]
+    fn test_cpu_governor_serde_roundtrip_custom() {
+        let json = serde_json::to_string(&CpuGovernor::Custom("userspace".to_string())).unwrap();
+        assert_eq!(json, "\"userspace\"");
+        let back: CpuGovernor = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, CpuGovernor::Custom("userspace".to_string()));
+    }
+
+    #[test]
+    fn test_cpu_governor_from_str_all_standard() {
+        assert_eq!("performance".parse::<CpuGovernor>().unwrap(), CpuGovernor::Standard(StandardGovernor::Performance));
+        assert_eq!("powersave".parse::<CpuGovernor>().unwrap(), CpuGovernor::Standard(StandardGovernor::Powersave));
+        assert_eq!("ondemand".parse::<CpuGovernor>().unwrap(), CpuGovernor::Standard(StandardGovernor::Ondemand));
+        assert_eq!("conservative".parse::<CpuGovernor>().unwrap(), CpuGovernor::Standard(StandardGovernor::Conservative));
+        assert_eq!("schedutil".parse::<CpuGovernor>().unwrap(), CpuGovernor::Standard(StandardGovernor::Schedutil));
+    }
+
+    #[test]
+    fn test_cpu_governor_from_str_unknown_becomes_custom() {
+        let g: CpuGovernor = "userspace".parse().unwrap();
+        assert_eq!(g, CpuGovernor::Custom("userspace".to_string()));
+    }
+
+    #[test]
+    fn test_cpu_governor_display_matches_as_str() {
+        assert_eq!(CpuGovernor::Standard(StandardGovernor::Performance).to_string(), "performance");
+        assert_eq!(CpuGovernor::Custom("interactive".to_string()).to_string(), "interactive");
+    }
+
+    #[test]
+    fn test_config_json_backward_compatible_with_string_governor() {
+        let json = r#"{
+            "battery": {"threshold": 80, "force_charge": false},
+            "cpu": {"governor_ac": "performance", "governor_battery": "powersave"},
+            "thermal": {"warn_temp": 70, "high_temp": 55, "shutdown_temp": 80, "fan_off_temp": 50, "fan_max_temp": 75, "profile": "balanced"}
+        }"#;
+        let config = Config::from_json(json).expect("legacy string-governor JSON must parse");
+        assert_eq!(config.cpu.governor_ac, CpuGovernor::Standard(StandardGovernor::Performance));
+        assert_eq!(config.cpu.governor_battery, CpuGovernor::Standard(StandardGovernor::Powersave));
     }
 }

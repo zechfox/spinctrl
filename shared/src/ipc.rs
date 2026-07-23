@@ -69,18 +69,15 @@ pub struct ThermalZone {
     pub trip_points: Vec<i32>,
 }
 
-/// Command types that can be sent to the bash service
+/// Command types that can be sent to the service
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum Command {
-    SetBatteryThreshold(u8),
     ForceCharge,
     StopCharge,
-    SetCpuGovernor(String),
-    SetThermalProfile(String),
     /// Push the full config JSON to the service at runtime. The service
-    /// applies it immediately (thermal/governor/threshold) but does NOT
-    /// persist it to `/etc` — `/etc` is the boot-time defaults source.
+    /// applies it immediately (thermal/governor/threshold) and persists it
+    /// to `config_status.json` so changes survive restarts.
     ApplyConfig(String),
     ReloadConfig,
     Shutdown,
@@ -348,11 +345,8 @@ impl IpcManager {
     /// Convert command to string format for FIFO communication
     fn command_to_string(&self, command: &Command) -> String {
         match command {
-            Command::SetBatteryThreshold(threshold) => format!("battery_threshold:{}", threshold),
             Command::ForceCharge => "force_charge".to_string(),
             Command::StopCharge => "stop_charge".to_string(),
-            Command::SetCpuGovernor(governor) => format!("cpu_governor:{}", governor),
-            Command::SetThermalProfile(profile) => format!("thermal_profile:{}", profile),
             Command::ApplyConfig(json) => format!("apply_config:{}", json),
             Command::ReloadConfig => "reload_config".to_string(),
             Command::Shutdown => "shutdown".to_string(),
@@ -364,9 +358,9 @@ impl IpcManager {
         self.runtime_dir.exists() && self.get_config_path().exists()
     }
     
-    /// Clean up IPC files (typically called on service shutdown)
+    /// Remove transient IPC files (status, temp files, FIFO) for a clean
+    /// shutdown. The events log is preserved as an audit trail.
     pub fn cleanup(&self) -> Result<()> {
-        // Remove temporary files
         for entry in fs::read_dir(&self.runtime_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -376,13 +370,17 @@ impl IpcManager {
                 }
             }
         }
-        
-        // Remove FIFO
+
+        let status_path = self.get_status_path();
+        if status_path.exists() {
+            let _ = fs::remove_file(status_path);
+        }
+
         let fifo_path = self.get_commands_path();
         if fifo_path.exists() {
             let _ = fs::remove_file(fifo_path);
         }
-        
+
         Ok(())
     }
 }
@@ -483,18 +481,18 @@ mod tests {
         let ipc = IpcManager::new();
         
         assert_eq!(
-            ipc.command_to_string(&Command::SetBatteryThreshold(85)),
-            "battery_threshold:85"
-        );
-        
-        assert_eq!(
-            ipc.command_to_string(&Command::SetCpuGovernor("ondemand".to_string())),
-            "cpu_governor:ondemand"
-        );
-        
-        assert_eq!(
             ipc.command_to_string(&Command::ForceCharge),
             "force_charge"
+        );
+        
+        assert_eq!(
+            ipc.command_to_string(&Command::StopCharge),
+            "stop_charge"
+        );
+        
+        assert_eq!(
+            ipc.command_to_string(&Command::ApplyConfig(r#"{"battery":{"threshold":85}}"#.into())),
+            r#"apply_config:{"battery":{"threshold":85}}"#
         );
     }
 
@@ -576,11 +574,8 @@ mod tests {
     #[test]
     fn test_command_to_string_all_variants() {
         let ipc = IpcManager::new();
-        assert_eq!(ipc.command_to_string(&Command::SetBatteryThreshold(75)), "battery_threshold:75");
         assert_eq!(ipc.command_to_string(&Command::ForceCharge), "force_charge");
         assert_eq!(ipc.command_to_string(&Command::StopCharge), "stop_charge");
-        assert_eq!(ipc.command_to_string(&Command::SetCpuGovernor("ondemand".into())), "cpu_governor:ondemand");
-        assert_eq!(ipc.command_to_string(&Command::SetThermalProfile("balanced".into())), "thermal_profile:balanced");
         assert_eq!(
             ipc.command_to_string(&Command::ApplyConfig(r#"{"battery":{"threshold":85}}"#.into())),
             r#"apply_config:{"battery":{"threshold":85}}"#
