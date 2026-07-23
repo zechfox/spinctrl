@@ -15,7 +15,6 @@ use crate::status_writer::StatusWriter;
 pub struct Service {
     pub ipc: Arc<shared::IpcManager>,
     pub config: Arc<RwLock<shared::Config>>,
-    pub force_charge: Arc<AtomicBool>,
     pub hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
     pub shutdown: Arc<AtomicBool>,
     pub dry_run: bool,
@@ -32,7 +31,6 @@ impl Service {
         Self {
             ipc: Arc::new(ipc),
             config: Arc::new(RwLock::new(config)),
-            force_charge: Arc::new(AtomicBool::new(false)),
             hardware: Arc::new(Mutex::new(hardware)),
             shutdown: Arc::new(AtomicBool::new(false)),
             dry_run,
@@ -58,7 +56,6 @@ impl Service {
         let ac_monitor = AcMonitor::new(
             self.hardware.clone(),
             self.config.clone(),
-            self.force_charge.clone(),
             self.shutdown.clone(),
         );
 
@@ -69,7 +66,6 @@ impl Service {
         let dispatcher = CommandDispatcher::new(
             self.hardware.clone(),
             self.config.clone(),
-            self.force_charge.clone(),
             self.shutdown.clone(),
             self.ipc.clone(),
         );
@@ -132,12 +128,17 @@ impl Service {
         }
 
         if ac {
-            let capacity = hw.get_battery_capacity().unwrap_or(0);
-            if capacity >= config.battery.threshold {
-                log::info!("Initial: battery at threshold, setting charge idle");
-                let _ = hw.set_charge_control(crate::hardware::ChargeMode::Idle);
-            } else {
+            if config.battery.force_charge {
+                log::info!("Initial: force charge active, setting charge normal");
                 let _ = hw.set_charge_control(crate::hardware::ChargeMode::Normal);
+            } else {
+                let capacity = hw.get_battery_capacity().unwrap_or(0);
+                if capacity >= config.battery.threshold {
+                    log::info!("Initial: battery at threshold, setting charge idle");
+                    let _ = hw.set_charge_control(crate::hardware::ChargeMode::Idle);
+                } else {
+                    let _ = hw.set_charge_control(crate::hardware::ChargeMode::Normal);
+                }
             }
         }
     }

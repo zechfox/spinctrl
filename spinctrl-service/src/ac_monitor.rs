@@ -11,7 +11,6 @@ use crate::hardware::{ChargeMode, HardwareBackend};
 pub struct AcMonitor {
     hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
     config: Arc<RwLock<Config>>,
-    force_charge: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -19,13 +18,11 @@ impl AcMonitor {
     pub fn new(
         hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
         config: Arc<RwLock<Config>>,
-        force_charge: Arc<AtomicBool>,
         shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             hardware,
             config,
-            force_charge,
             shutdown,
         }
     }
@@ -69,9 +66,9 @@ impl AcMonitor {
     }
 
     async fn handle_ac_plugged(&self) {
-        let (governor_ac, threshold) = {
+        let (governor_ac, threshold, force) = {
             let cfg = self.config.read().await;
-            (cfg.cpu.governor_ac.clone(), cfg.battery.threshold)
+            (cfg.cpu.governor_ac.clone(), cfg.battery.threshold, cfg.battery.force_charge)
         };
 
         let mut hw = self.hardware.lock().await;
@@ -80,7 +77,6 @@ impl AcMonitor {
             log::error!("Failed to set AC governor: {e}");
         }
 
-        let force = self.force_charge.load(Ordering::Relaxed);
         let capacity = match hw.get_battery_capacity() {
             Ok(c) => c,
             Err(e) => {

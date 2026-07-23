@@ -90,7 +90,6 @@ pub fn start_fifo_reader(
 pub struct CommandDispatcher {
     hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
     config: Arc<RwLock<Config>>,
-    force_charge: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     ipc: Arc<IpcManager>,
 }
@@ -99,14 +98,12 @@ impl CommandDispatcher {
     pub fn new(
         hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
         config: Arc<RwLock<Config>>,
-        force_charge: Arc<AtomicBool>,
         shutdown: Arc<AtomicBool>,
         ipc: Arc<IpcManager>,
     ) -> Self {
         Self {
             hardware,
             config,
-            force_charge,
             shutdown,
             ipc,
         }
@@ -153,7 +150,18 @@ impl CommandDispatcher {
     }
 
     async fn handle_force_charge(&self) -> ServiceResult<()> {
-        self.force_charge.store(true, Ordering::Relaxed);
+        // Update config (single source of truth) and persist.
+        {
+            let mut cfg = self.config.write().await;
+            cfg.battery.force_charge = true;
+        }
+        {
+            let cfg = self.config.read().await;
+            if let Err(e) = self.ipc.write_config(&cfg) {
+                log::error!("Failed to persist force_charge=true to config_status.json: {e}");
+                return Err(ServiceError::Shared(e));
+            }
+        }
         log::info!("Force charge enabled");
         let _ = self.ipc.log_event(
             EventType::CommandExecuted,
@@ -169,7 +177,18 @@ impl CommandDispatcher {
     }
 
     async fn handle_stop_charge(&self) -> ServiceResult<()> {
-        self.force_charge.store(false, Ordering::Relaxed);
+        // Update config (single source of truth) and persist.
+        {
+            let mut cfg = self.config.write().await;
+            cfg.battery.force_charge = false;
+        }
+        {
+            let cfg = self.config.read().await;
+            if let Err(e) = self.ipc.write_config(&cfg) {
+                log::error!("Failed to persist force_charge=false to config_status.json: {e}");
+                return Err(ServiceError::Shared(e));
+            }
+        }
         log::info!("Force charge disabled");
         let _ = self.ipc.log_event(
             EventType::CommandExecuted,
@@ -186,6 +205,9 @@ impl CommandDispatcher {
             if capacity >= threshold {
                 hw.set_charge_control(ChargeMode::Idle)?;
             }
+            // If capacity < threshold, charge control stays Normal (already set
+            // by force_charge or ac_monitor). No action needed — ac_monitor's
+            // next poll will maintain the correct mode.
         }
         drop(hw);
         Ok(())
@@ -200,11 +222,11 @@ impl CommandDispatcher {
 
         {
             let mut hw = self.hardware.lock().await;
-            hw.configure_thermal(&new_config.thermal)?;
-            hw.configure_cpu_frequencies(
-                new_config.cpu.min_freq_khz,
-                new_config.cpu.max_freq_khz,
-            )?;
+            // Governor first: if validation's sysfs read raced with a driver
+            // or mode change, governor application is most likely to fail at
+            // runtime. Applying it first leaves thermal/freq untouched on that
+            // failure path. (Input-level governor errors are already caught
+            // by validate() above before any hardware mutation.)
             let ac = hw.get_ac_status().unwrap_or(false);
             let governor = if ac {
                 &new_config.cpu.governor_ac
@@ -212,6 +234,11 @@ impl CommandDispatcher {
                 &new_config.cpu.governor_battery
             };
             hw.set_cpu_governor(governor)?;
+            hw.configure_thermal(&new_config.thermal)?;
+            hw.configure_cpu_frequencies(
+                new_config.cpu.min_freq_khz,
+                new_config.cpu.max_freq_khz,
+            )?;
         }
 
         {
