@@ -1,0 +1,35 @@
+[package]
+name = "spinctrl-service"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Background service for SpinCtrl hardware management"
+
+[lib]
+name = "spinctrl_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spinctrl-service"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "time", "signal"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+notify = { workspace = true }
+clap = { workspace = true }
+nix = { workspace = true, features = ["fs", "user"] }
+chrono = { workspace = true }
+shared = { path = "../shared" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

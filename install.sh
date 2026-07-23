@@ -43,6 +43,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 cargo build --release --bin spinctrl
+cargo build --release --bin spinctrl-service
 
 # Create system user and group
 echo "Creating system group..."
@@ -54,7 +55,7 @@ fi
 # Install binaries
 echo "Installing binaries..."
 install -m 755 target/release/spinctrl "$INSTALL_DIR/"
-install -m 755 spinctrl-service/spinctrl-service.sh "$INSTALL_DIR/spinctrl-service"
+install -m 755 target/release/spinctrl-service "$INSTALL_DIR/"
 
 # Install systemd service
 echo "Installing systemd service..."

@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "spinctrl-tui",
-    "shared"
+    "spinctrl-service",
+    "shared",
 ]
 
 [workspace.package]
