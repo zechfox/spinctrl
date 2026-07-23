@@ -646,8 +646,8 @@ check_initial_state() {
         cp "$CONFIG_FILE" "$CONFIG_STATUS_FILE"
         chmod 640 "$CONFIG_STATUS_FILE"
     fi
-    
-# Configure thermal thresholds
+
+    # Configure thermal thresholds
     configure_thermal
 
     # Apply CPU frequency limits
