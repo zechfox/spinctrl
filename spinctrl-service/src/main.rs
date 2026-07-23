@@ -10,6 +10,7 @@ use spinctrl_service::service::Service;
 
 #[derive(Parser)]
 #[command(name = "spinctrl-service")]
+#[command(version = env!("CARGO_PKG_VERSION"), long_version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("SPINCTRL_GIT_INFO"), ")"))]
 struct Cli {
     /// Dry-run mode: mock hardware, don't touch real hardware
     #[arg(long)]
