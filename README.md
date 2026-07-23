@@ -53,9 +53,6 @@ SpinCtrl provides autonomous laptop power management through a background servic
 ### System Dependencies
 - `ectool` - Embedded Controller interface (chromium-ec package)
 - `cpupower` - CPU frequency scaling utilities
-- `jq` - JSON processing for configuration
-- `inotifywait` - File system event monitoring (inotify-tools)
-- `udevadm` - Hardware event monitoring
 
 ### Runtime Requirements
 - Linux system with systemd
@@ -75,7 +72,7 @@ sudo ./install.sh
 ### Manual Installation
 ```bash
 # Install dependencies (Ubuntu/Debian)
-sudo apt install coreutils cpupower jq inotify-tools udev
+sudo apt install coreutils cpupower udev
 
 # Build Rust components
 cargo build --release
@@ -258,10 +255,18 @@ spinctrl/
 │   │   ├── error.rs          # TUI-specific errors
 │   │   └── main.rs           # Entry point
 │   └── Cargo.toml
-├── spinctrl-service/         # Bash service
-│   ├── spinctrl-service.sh   # Enhanced service script
-│   └── spinctrl.service      # Systemd unit file
-├── .claude/specs/spinctrl/   # Design specifications
+├── spinctrl-service/         # Rust background service
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs            # Entry point, CLI, tokio runtime
+│       ├── service.rs         # Service orchestration
+│       ├── hardware.rs        # HardwareBackend trait + EctoolBackend + MockBackend
+│       ├── ac_monitor.rs      # AC adapter state polling
+│       ├── command_processor.rs # FIFO command reader
+│       ├── config_watcher.rs  # Config file change watcher
+│       ├── status_writer.rs   # Periodic status.json writer
+│       └── error.rs           # Service error types
+├── docs/                     # Design specifications
 │   ├── requirements.md       # System requirements
 │   ├── design.md            # Architecture design
 │   └── tasks.md             # Implementation tasks
@@ -274,7 +279,7 @@ spinctrl/
 
 The system follows strict privilege separation:
 
-- **Bash service**: Runs as root with minimal systemd security restrictions
+- **Rust service**: Runs as root with minimal systemd security restrictions
 - **TUI application**: Runs as normal user, communicates via file-based IPC
 - **File permissions**: `0750` for directories, `0640` for config/status/events, `0620` for the commands FIFO; single dedicated `spinctrl` group as the access boundary
 - **Input validation**: All user inputs validated before hardware operations
@@ -305,7 +310,7 @@ groups $USER      # Verify group membership includes 'spinctrl'
 **Service won't start:**
 ```bash
 # Check dependencies are installed
-which ectool cpupower jq inotifywait
+which ectool cpupower
 
 # View service logs for errors
 sudo journalctl -u spinctrl -f
