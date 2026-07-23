@@ -94,9 +94,9 @@ impl App {
 
     /// Start a `notify` file watcher on the IPC runtime directory.
     /// Returns the watcher handle (must be kept alive) or `None` on failure.
-    /// The watcher sets `self.needs_refresh` whenever a file changes in the
-    /// directory, so the run loop can react promptly instead of waiting for
-    /// the next 2-second poll tick.
+    /// Only `config_status.json`, `status.json`, and `events.log` changes
+    /// trigger a refresh — FIFO writes are excluded to prevent stale-config
+    /// overwrite of optimistic updates from just-sent `f`/`s` commands.
     fn start_file_watcher(&self) -> Option<notify::RecommendedWatcher> {
         let watch_dir = self.ipc.get_status_path().parent()?.to_path_buf();
         if !watch_dir.exists() {
@@ -107,10 +107,21 @@ impl App {
             return None;
         }
         let flag = Arc::clone(&self.needs_refresh);
+        let config_path = self.ipc.get_config_path();
+        let status_path = self.ipc.get_status_path();
+        let events_path = self.ipc.get_events_path();
         let watcher = notify::recommended_watcher(
             move |res: std::result::Result<notify::Event, notify::Error>| {
-                if let Ok(_event) = res {
-                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Ok(event) = res {
+                    // Only refresh for data-file changes, not FIFO writes.
+                    // Empty paths = unknown source — refresh as a fallback.
+                    let should_refresh = event.paths.is_empty()
+                        || event.paths.iter().any(|p| {
+                            p == &config_path || p == &status_path || p == &events_path
+                        });
+                    if should_refresh {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             },
         );
