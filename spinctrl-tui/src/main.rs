@@ -19,7 +19,7 @@ use crate::error::Result;
 #[derive(Parser)]
 #[command(name = "spinctrl")]
 #[command(about = "SpinCtrl system control tool for Acer Spin 13")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = env!("CARGO_PKG_VERSION"), long_version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("SPINCTRL_GIT_INFO"), ")"))]
 struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
