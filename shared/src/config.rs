@@ -156,14 +156,24 @@ impl BatteryConfig {
 
 impl CpuConfig {
     fn validate(&self) -> Vec<String> {
-        self.validate_with_available(available_cpu_frequencies().as_deref())
+        let govs = Config::get_available_governors();
+        self.validate_with_available(
+            available_cpu_frequencies().as_deref(),
+            Some(govs.as_slice()),
+        )
     }
 
-    /// Pure validation core. `available` is the hardware-supported kHz list
-    /// (from `available_cpu_frequencies()`); pass `None` to skip the
-    /// available-range check (sysfs unreadable, or tests). This split keeps
-    /// the range logic unit-testable without real hardware/sysfs.
-    fn validate_with_available(&self, available: Option<&[u32]>) -> Vec<String> {
+    /// Pure validation core. `available_freqs` is the hardware-supported kHz
+    /// list (from `available_cpu_frequencies()`); pass `None` to skip the
+    /// available-range check (sysfs unreadable, or tests). `available_govs` is
+    /// the hardware-supported governors list (from `get_available_governors()`);
+    /// pass `None` or `Some(&[])` to skip the governor availability check.
+    /// This split keeps the range logic unit-testable without real hardware/sysfs.
+    fn validate_with_available(
+        &self,
+        available_freqs: Option<&[u32]>,
+        available_govs: Option<&[CpuGovernor]>,
+    ) -> Vec<String> {
         let mut errors = Vec::new();
         if self.governor_ac.as_str().is_empty() {
             errors.push("AC governor cannot be empty".to_string());
@@ -176,7 +186,7 @@ impl CpuConfig {
                 errors.push("Minimum frequency must be less than maximum frequency".to_string());
             }
         }
-        if let Some(freqs) = available {
+        if let Some(freqs) = available_freqs {
             let min_avail = freqs.iter().copied().min();
             let max_avail = freqs.iter().copied().max();
             if let (Some(min), Some(min_avail)) = (self.min_freq_khz, min_avail) {
@@ -192,6 +202,26 @@ impl CpuConfig {
                     errors.push(format!(
                         "Maximum frequency {} kHz exceeds the highest available {} kHz",
                         max, max_avail
+                    ));
+                }
+            }
+        }
+        // Governor availability check (mirrors frequency range check above).
+        // Empty/None list means sysfs was unreadable, so skip — same semantics
+        // as the frequency check, so validation never falsely rejects a real
+        // governor on systems where the TUI user lacks sysfs read access.
+        if let Some(govs) = available_govs {
+            if !govs.is_empty() {
+                if !govs.iter().any(|g| g == &self.governor_ac) {
+                    errors.push(format!(
+                        "AC governor '{}' is not in the available governors list",
+                        self.governor_ac.as_str()
+                    ));
+                }
+                if !govs.iter().any(|g| g == &self.governor_battery) {
+                    errors.push(format!(
+                        "Battery governor '{}' is not in the available governors list",
+                        self.governor_battery.as_str()
                     ));
                 }
             }
@@ -572,7 +602,7 @@ mod tests {
         let mut config = Config::default();
         config.cpu.min_freq_khz = Some(500_000);
         config.cpu.max_freq_khz = Some(2_000_000);
-        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]));
+        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]), None);
         assert!(
             errors.iter().any(|e| e.contains("below the lowest available")),
             "expected below-range error, got: {errors:?}"
@@ -584,7 +614,7 @@ mod tests {
         let mut config = Config::default();
         config.cpu.min_freq_khz = Some(1_000_000);
         config.cpu.max_freq_khz = Some(5_000_000);
-        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]));
+        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]), None);
         assert!(
             errors.iter().any(|e| e.contains("exceeds the highest available")),
             "expected above-range error, got: {errors:?}"
@@ -596,7 +626,7 @@ mod tests {
         let mut config = Config::default();
         config.cpu.min_freq_khz = Some(1_000_000);
         config.cpu.max_freq_khz = Some(3_000_000);
-        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]));
+        let errors = config.cpu.validate_with_available(Some(&[1_000_000, 2_000_000, 3_000_000]), None);
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
@@ -605,8 +635,70 @@ mod tests {
         let mut config = Config::default();
         config.cpu.min_freq_khz = Some(1);
         config.cpu.max_freq_khz = Some(2);
-        let errors = config.cpu.validate_with_available(None);
+        let errors = config.cpu.validate_with_available(None, None);
         assert!(errors.is_empty(), "available=None skips range check, got: {errors:?}");
+    }
+
+    #[test]
+    fn test_governor_validation_rejects_unavailable_ac() {
+        let mut config = Config::default();
+        config.cpu.governor_ac = CpuGovernor::Custom("definitely_bogus".to_string());
+        let govs = [CpuGovernor::Standard(StandardGovernor::Performance)];
+        let errors = config.cpu.validate_with_available(None, Some(&govs[..]));
+        assert!(
+            errors.iter().any(|e| e.contains("AC governor") && e.contains("not in the available")),
+            "expected AC governor rejection, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_governor_validation_rejects_unavailable_battery() {
+        let mut config = Config::default();
+        config.cpu.governor_battery = CpuGovernor::Custom("definitely_bogus".to_string());
+        let govs = [CpuGovernor::Standard(StandardGovernor::Performance)];
+        let errors = config.cpu.validate_with_available(None, Some(&govs[..]));
+        assert!(
+            errors.iter().any(|e| e.contains("Battery governor") && e.contains("not in the available")),
+            "expected Battery governor rejection, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_governor_validation_accepts_available() {
+        let config = Config::default();
+        // defaults: governor_ac=Performance, governor_battery=Powersave
+        let govs = [
+            CpuGovernor::Standard(StandardGovernor::Performance),
+            CpuGovernor::Standard(StandardGovernor::Powersave),
+        ];
+        let errors = config.cpu.validate_with_available(None, Some(&govs[..]));
+        assert!(
+            errors.iter().all(|e| !e.contains("governor") || e.contains("cannot be empty")),
+            "expected no governor availability errors, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_governor_validation_skipped_when_none() {
+        let mut config = Config::default();
+        config.cpu.governor_ac = CpuGovernor::Custom("definitely_bogus".to_string());
+        let errors = config.cpu.validate_with_available(None, None);
+        assert!(
+            errors.iter().all(|e| !e.contains("not in the available")),
+            "None must skip governor check, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_governor_validation_skipped_when_empty_list() {
+        let mut config = Config::default();
+        config.cpu.governor_ac = CpuGovernor::Custom("definitely_bogus".to_string());
+        let govs: Vec<CpuGovernor> = vec![];
+        let errors = config.cpu.validate_with_available(None, Some(&govs[..]));
+        assert!(
+            errors.iter().all(|e| !e.contains("not in the available")),
+            "empty list must skip governor check, got: {errors:?}"
+        );
     }
 
     #[test]
