@@ -688,3 +688,64 @@ fn test_tab_cycles_fields_in_editing_mode() {
         "must wrap"
     );
 }
+
+#[test]
+fn test_begin_editing_battery_starts_at_force_charge_when_force_true() {
+    let (mut app, _temp) = make_test_app();
+    app.selected_tab = Tab::Battery;
+    app.config.battery.force_charge = true;
+    app.begin_editing();
+    assert_eq!(
+        app.editing_field,
+        Some(EditField::BatteryForceCharge),
+        "when force_charge is true, begin_editing must start at BatteryForceCharge"
+    );
+}
+
+#[test]
+fn test_next_edit_field_skips_threshold_when_force_true() {
+    let (mut app, _temp) = make_test_app();
+    app.selected_tab = Tab::Battery;
+    app.mode = AppMode::Editing;
+    app.config.battery.force_charge = true;
+    app.editing_field = Some(EditField::BatteryForceCharge);
+    app.next_edit_field();
+    assert_eq!(
+        app.mode,
+        AppMode::Monitoring,
+        "must exit edit mode when threshold is disabled and nothing is left to edit"
+    );
+    assert_eq!(
+        app.editing_field,
+        None,
+        "editing_field must be cleared after exiting edit mode"
+    );
+}
+
+#[test]
+fn test_next_edit_field_cycles_to_threshold_when_force_false() {
+    let (mut app, _temp) = make_test_app();
+    app.selected_tab = Tab::Battery;
+    app.mode = AppMode::Editing;
+    app.config.battery.force_charge = false;
+    app.editing_field = Some(EditField::BatteryForceCharge);
+    app.next_edit_field();
+    assert_eq!(
+        app.editing_field,
+        Some(EditField::BatteryThreshold),
+        "when force_charge is false, must cycle back to BatteryThreshold"
+    );
+}
+
+#[test]
+fn test_adjust_field_threshold_noop_when_force_true() {
+    let (mut app, _temp) = make_test_app();
+    app.config.battery.force_charge = true;
+    app.editing_field = Some(EditField::BatteryThreshold);
+    let before = app.config.battery.threshold;
+    app.adjust_field(1);
+    assert_eq!(
+        app.config.battery.threshold, before,
+        "threshold must not change when force_charge is active"
+    );
+}

@@ -68,6 +68,7 @@ impl App {
             KeyCode::Char('f') => match self.selected_tab {
                 Tab::Battery => {
                     self.send_command(Command::ForceCharge).await?;
+                    self.config.battery.force_charge = true;
                 }
                 Tab::Events => {
                     self.cycle_event_filter();
@@ -77,6 +78,7 @@ impl App {
             KeyCode::Char('s') => {
                 if self.selected_tab == Tab::Battery {
                     self.send_command(Command::StopCharge).await?;
+                    self.config.battery.force_charge = false;
                 }
             }
             KeyCode::Char('a') if self.selected_tab == Tab::Events => {

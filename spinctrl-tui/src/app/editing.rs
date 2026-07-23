@@ -25,7 +25,13 @@ impl App {
     pub fn begin_editing(&mut self) {
         self.config_backup = self.config.clone();
         let field = match self.selected_tab {
-            Tab::Battery => EditField::BatteryThreshold,
+            Tab::Battery => {
+                if self.config.battery.force_charge {
+                    EditField::BatteryForceCharge
+                } else {
+                    EditField::BatteryThreshold
+                }
+            }
             Tab::CPU => EditField::CpuGovernorAc,
             Tab::Thermal => EditField::ThermalProfile,
             _ => return,
@@ -79,6 +85,9 @@ impl App {
         let Some(field) = self.editing_field else { return };
         match field {
             EditField::BatteryThreshold => {
+                if self.config.battery.force_charge {
+                    return; // Threshold is disabled while force charge is active
+                }
                 let new_val = (i32::from(self.config.battery.threshold) + direction).clamp(50, 100);
                 self.config.battery.threshold = new_val as u8;
             }
@@ -169,7 +178,13 @@ impl App {
         let cur = self.editing_field.unwrap_or(EditField::BatteryThreshold);
         let next: Option<EditField> = match (cur, self.selected_tab) {
             (EditField::BatteryThreshold, Tab::Battery) => Some(EditField::BatteryForceCharge),
-            (EditField::BatteryForceCharge, Tab::Battery) => Some(EditField::BatteryThreshold),
+            (EditField::BatteryForceCharge, Tab::Battery) => {
+                if self.config.battery.force_charge {
+                    None  // Exit edit mode — threshold is disabled, nothing left to edit
+                } else {
+                    Some(EditField::BatteryThreshold)
+                }
+            }
             (EditField::CpuGovernorAc, Tab::CPU) => Some(EditField::CpuGovernorBattery),
             (EditField::CpuGovernorBattery, Tab::CPU) => Some(EditField::CpuMinFreqKhz),
             (EditField::CpuMinFreqKhz, Tab::CPU) => Some(EditField::CpuMaxFreqKhz),

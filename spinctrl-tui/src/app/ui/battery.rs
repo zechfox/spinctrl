@@ -43,20 +43,35 @@ impl App {
 
         let bc = &self.config.battery;
         let mut lines = vec![
-            Line::from(vec![
-                Span::styled(
-                    "Threshold:  ",
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                self.field_display(
-                    EditField::BatteryThreshold,
-                    &bc.threshold.to_string(),
-                    "%",
-                    Color::Cyan,
-                ),
-                Span::raw("  "),
-                Span::styled(field_description(EditField::BatteryThreshold), Style::default().fg(Color::DarkGray)),
-            ]),
+            Line::from({
+                let threshold_color = if bc.force_charge {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                };
+                let threshold_note = if bc.force_charge {
+                    " (inactive — force charge on)"
+                } else {
+                    ""
+                };
+                vec![
+                    Span::styled(
+                        "Threshold:  ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    self.field_display(
+                        EditField::BatteryThreshold,
+                        &bc.threshold.to_string(),
+                        "%",
+                        threshold_color,
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("{}{}", field_description(EditField::BatteryThreshold), threshold_note),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]
+            }),
             Line::from(vec![
                 Span::styled(
                     "Force:      ",
