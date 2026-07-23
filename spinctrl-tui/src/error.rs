@@ -4,7 +4,7 @@ use thiserror::Error;
 pub enum TuiError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Shared library error: {0}")]
     Shared(#[from] shared::SpinCtrlError),
 }
@@ -19,7 +19,7 @@ mod tests {
 
     #[test]
     fn test_io_error_from_conversion() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "io boom");
+        let io_err = io::Error::other("io boom");
         let err: TuiError = io_err.into();
         let msg = err.to_string();
         assert!(msg.contains("IO error"), "msg was: {msg}");
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_result_alias_is_error_variant() {
-        let res: Result<()> = Err(TuiError::Io(io::Error::new(io::ErrorKind::Other, "oops")));
+        let res: Result<()> = Err(TuiError::Io(io::Error::other("oops")));
         assert!(res.is_err());
     }
 }

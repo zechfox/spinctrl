@@ -28,5 +28,8 @@ shared = { path = "../shared" }
 # Workspace deps used directly by the TUI (already compiled via shared)
 chrono = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

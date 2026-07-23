@@ -1,13 +1,13 @@
 mod app;
 mod error;
+#[cfg(test)]
+mod tests;
 
 use clap::Parser;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use env_logger;
 use ratatui::{
     backend::CrosstermBackend,
     Terminal,
@@ -24,7 +24,7 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
-    
+
     /// Run in check mode (verify service status and exit)
     #[arg(long)]
     check: bool,
@@ -33,7 +33,7 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     // Initialize logging. Default is OFF: stderr output corrupts the TUI's
     // alternate-screen display. --verbose redirects to a file instead.
     if cli.verbose {
@@ -50,45 +50,44 @@ async fn main() -> Result<()> {
     } else {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")).init();
     }
-    
+
     log::info!("SpinCtrl TUI starting...");
-    
+
     if cli.check {
         // Quick check mode
         return run_check_mode().await;
     }
-    
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    
+
     // Create app and run it
     let mut app = App::new()?;
     let res = app.run(&mut terminal).await;
-    
+
     // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
-    
+
     if let Err(err) = res {
-        eprintln!("Error: {}", err);
+        eprintln!("Error: {err}");
         std::process::exit(1);
     }
-    
+
     Ok(())
 }
 
 async fn run_check_mode() -> Result<()> {
     let ipc = shared::IpcManager::new();
-    
+
     match ipc.read_status() {
         Ok(Some(status)) => {
             println!("✓ Service is running (PID: {})", status.service_pid);
@@ -102,7 +101,7 @@ async fn run_check_mode() -> Result<()> {
             std::process::exit(1);
         }
         Err(e) => {
-            println!("✗ Error checking service: {}", e);
+            println!("✗ Error checking service: {e}");
             std::process::exit(1);
         }
     }
