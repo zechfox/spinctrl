@@ -599,11 +599,6 @@ ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/spinctrl /sys/class/power_supply
 
-# IPC directory setup
-ExecStartPre=/bin/mkdir -p /var/lib/spinctrl
-ExecStartPre=/bin/chown root:spinctrl /var/lib/spinctrl
-ExecStartPre=/bin/chmod 750 /var/lib/spinctrl
-
 [Install]
 WantedBy=multi-user.target
 ```

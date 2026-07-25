@@ -239,6 +239,16 @@ impl CommandDispatcher {
                 new_config.cpu.min_freq_khz,
                 new_config.cpu.max_freq_khz,
             )?;
+            if ac {
+                if new_config.battery.force_charge {
+                    hw.set_charge_control(ChargeMode::Normal)?;
+                } else {
+                    let capacity = hw.get_battery_capacity().unwrap_or(0);
+                    if capacity >= new_config.battery.threshold {
+                        hw.set_charge_control(ChargeMode::Idle)?;
+                    }
+                }
+            }
         }
 
         {

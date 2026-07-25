@@ -87,7 +87,7 @@ fn init_ipc(ipc: &shared::IpcManager) -> ServiceResult<()> {
         .flatten()
         .map(|g| g.gid);
 
-    set_file_perms(runtime_dir, 0o2750, spinctrl_gid)?;
+    set_file_perms(runtime_dir, 0o2750, spinctrl_gid);
 
     let fifo_path = ipc.get_commands_path();
     if fifo_path.exists() && !is_fifo(&fifo_path) {
@@ -101,24 +101,26 @@ fn init_ipc(ipc: &shared::IpcManager) -> ServiceResult<()> {
         )
         .map_err(|e| ServiceError::Config(format!("Failed to create FIFO: {e}")))?;
     }
-    set_file_perms(&fifo_path, 0o620, spinctrl_gid)?;
+    set_file_perms(&fifo_path, 0o620, spinctrl_gid);
 
     let events_path = ipc.get_events_path();
     if !events_path.exists() {
         fs::File::create(&events_path)?;
     }
-    set_file_perms(&events_path, 0o640, spinctrl_gid)?;
+    set_file_perms(&events_path, 0o640, spinctrl_gid);
 
     Ok(())
 }
 
-fn set_file_perms(path: &Path, mode: u32, gid: Option<Gid>) -> ServiceResult<()> {
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
-    if let Some(gid) = gid {
-        chown(path, Some(Uid::from_raw(0)), Some(gid))
-            .map_err(|e| ServiceError::Config(format!("Failed to chown {}: {e}", path.display())))?;
+fn set_file_perms(path: &Path, mode: u32, gid: Option<Gid>) {
+    if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
+        log::warn!("Could not set permissions on {}: {e}", path.display());
     }
-    Ok(())
+    if let Some(gid) = gid {
+        if let Err(e) = chown(path, Some(Uid::from_raw(0)), Some(gid)) {
+            log::warn!("Could not chown {}: {e}", path.display());
+        }
+    }
 }
 
 fn is_fifo(path: &Path) -> bool {

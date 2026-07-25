@@ -28,12 +28,6 @@ LockPersonality=true
 MemoryDenyWriteExecute=false
 RestrictSUIDSGID=true
 
-# Create spinctrl group and setup IPC directory
-ExecStartPre=/bin/bash -c 'getent group spinctrl >/dev/null || groupadd -r spinctrl'
-ExecStartPre=/bin/mkdir -p /var/lib/spinctrl
-ExecStartPre=/bin/chown root:spinctrl /var/lib/spinctrl
-ExecStartPre=/bin/chmod 750 /var/lib/spinctrl
-
 # Clean up on stop
 ExecStopPost=/bin/rm -f /var/lib/spinctrl/status.json
 ExecStopPost=/bin/rm -f /var/lib/spinctrl/commands.fifo
