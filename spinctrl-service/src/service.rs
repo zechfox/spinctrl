@@ -80,6 +80,7 @@ impl Service {
 
         let status_writer = StatusWriter::new(
             self.hardware.clone(),
+            self.config.clone(),
             self.shutdown.clone(),
             self.ipc.clone(),
         );

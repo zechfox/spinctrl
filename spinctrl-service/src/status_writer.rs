@@ -2,13 +2,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use shared::Config;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 
 use crate::hardware::HardwareBackend;
 
 pub struct StatusWriter {
     hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
+    config: Arc<RwLock<Config>>,
     shutdown: Arc<AtomicBool>,
     ipc: Arc<shared::IpcManager>,
 }
@@ -16,11 +18,13 @@ pub struct StatusWriter {
 impl StatusWriter {
     pub fn new(
         hardware: Arc<Mutex<Box<dyn HardwareBackend>>>,
+        config: Arc<RwLock<Config>>,
         shutdown: Arc<AtomicBool>,
         ipc: Arc<shared::IpcManager>,
     ) -> Self {
         Self {
             hardware,
+            config,
             shutdown,
             ipc,
         }
@@ -53,8 +57,16 @@ impl StatusWriter {
         let thermal_zones = hw.get_thermal_zones().unwrap_or_default();
         drop(hw);
 
+        // Must mirror the charge-control predicate in ac_monitor.rs and
+        // command_processor.rs: idle (threshold enforced) when AC is on,
+        // not force_charge, and capacity has reached the threshold.
+        let (threshold, force_charge) = {
+            let cfg = self.config.read().await;
+            (cfg.battery.threshold, cfg.battery.force_charge)
+        };
         let charging = ac_connected && battery_capacity < 100;
-        let threshold_active = ac_connected && battery_capacity >= 100;
+        let threshold_active =
+            ac_connected && !force_charge && battery_capacity >= threshold;
 
         let status = shared::SystemStatus {
             battery: shared::BatteryStatus {
