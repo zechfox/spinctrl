@@ -64,7 +64,7 @@ impl StatusWriter {
             let cfg = self.config.read().await;
             (cfg.battery.threshold, cfg.battery.force_charge)
         };
-        let charging = ac_connected && battery_capacity < 100;
+        let charging = ac_connected && (force_charge || battery_capacity < threshold);
         let threshold_active =
             ac_connected && !force_charge && battery_capacity >= threshold;
 
