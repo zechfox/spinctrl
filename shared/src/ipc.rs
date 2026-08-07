@@ -45,6 +45,15 @@ pub struct BatteryStatus {
     pub charging: bool,
     pub threshold_active: bool,
     pub ac_connected: bool,
+    /// Battery State-of-Health as a percentage (0-100), clamped.
+    /// `None` when unavailable (no `energy_full`/`energy_full_design`
+    /// in sysfs and `ectool battery` fallback failed or returned no data).
+    #[serde(default)]
+    pub health: Option<u8>,
+    /// Battery cycle count. `None` when the sysfs `cycle_count` file is
+    /// absent, unreadable, or zero (kernel ABI: 0 means "not available").
+    #[serde(default)]
+    pub cycle_count: Option<u32>,
 }
 
 /// Power management status
@@ -434,6 +443,8 @@ mod tests {
                 charging: true,
                 threshold_active: false,
                 ac_connected: true,
+                health: Some(92),
+                cycle_count: Some(109),
             },
             power: PowerStatus {
                 ac_connected: true,
@@ -448,7 +459,10 @@ mod tests {
         assert!(ipc.write_status(&status).is_ok());
         let read_status = ipc.read_status().unwrap();
         assert!(read_status.is_some());
-        assert_eq!(read_status.unwrap().battery.capacity, 75);
+        let read_battery = &read_status.unwrap().battery;
+        assert_eq!(read_battery.capacity, 75);
+        assert_eq!(read_battery.health, Some(92));
+        assert_eq!(read_battery.cycle_count, Some(109));
     }
     
     #[test]
