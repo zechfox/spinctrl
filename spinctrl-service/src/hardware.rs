@@ -24,6 +24,12 @@ impl ChargeMode {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BatteryHealthInfo {
+    pub health: Option<u8>,
+    pub cycle_count: Option<u32>,
+}
+
 pub trait HardwareBackend: Send + 'static {
     /// Set the battery charge control mode.
     ///
@@ -59,6 +65,12 @@ pub trait HardwareBackend: Send + 'static {
     /// # Errors
     /// Returns `Hardware` error if the sysfs path is unreadable.
     fn get_battery_capacity(&self) -> ServiceResult<u8>;
+    /// Get battery State-of-Health percentage and cycle count.
+    ///
+    /// # Errors
+    /// Returns `Ok` with `None` fields when data is unavailable (missing sysfs
+    /// files or ectool failure); reserves `Err` for unexpected IO errors.
+    fn get_battery_health(&self) -> ServiceResult<BatteryHealthInfo>;
     /// Get the current CPU governor.
     ///
     /// # Errors
@@ -282,6 +294,79 @@ impl HardwareBackend for EctoolBackend {
             .map_err(|e| ServiceError::Hardware(format!("Invalid battery capacity: {e}")))
     }
 
+    fn get_battery_health(&self) -> ServiceResult<BatteryHealthInfo> {
+        // Read a sysfs file as u64, returning None on any failure.
+        fn read_sysfs_u64(path: &str) -> Option<u64> {
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok())
+        }
+
+        // Try energy pair first (µWh), then charge pair (µAh) — ratio is unit-free.
+        let maybe_full = read_sysfs_u64("/sys/class/power_supply/BAT0/energy_full");
+        let maybe_design = read_sysfs_u64("/sys/class/power_supply/BAT0/energy_full_design");
+        let (full, design) = if maybe_full.is_some() && maybe_design.is_some() {
+            (maybe_full, maybe_design)
+        } else {
+            (
+                read_sysfs_u64("/sys/class/power_supply/BAT0/charge_full"),
+                read_sysfs_u64("/sys/class/power_supply/BAT0/charge_full_design"),
+            )
+        };
+
+        let sysfs_health = match (full, design) {
+            (Some(f), Some(d)) if d > 0 => Some((f.saturating_mul(100).saturating_div(d).min(100)) as u8),
+            _ => None,
+        };
+
+        let sysfs_cycle_count = fs::read_to_string("/sys/class/power_supply/BAT0/cycle_count")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .filter(|c| *c > 0);
+
+        if sysfs_health.is_some() {
+            return Ok(BatteryHealthInfo {
+                health: sysfs_health,
+                cycle_count: sysfs_cycle_count,
+            });
+        }
+
+        // sysfs design missing/zero → fall back to ectool battery
+        let output = Command::new("ectool")
+            .args(["battery"])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(BatteryHealthInfo {
+                health: None,
+                cycle_count: sysfs_cycle_count,
+            }),
+        };
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let ectool_design = parse_ectool_number(&text, "Design capacity");
+        let ectool_full = parse_ectool_number(&text, "Last full charge");
+        let ectool_health = match (ectool_full, ectool_design) {
+            (Some(l), Some(d)) if d > 0 => Some((l.saturating_mul(100).saturating_div(d).min(100)) as u8),
+            _ => None,
+        };
+
+        let cycle_count = sysfs_cycle_count.or_else(|| {
+            parse_ectool_number(&text, "Cycle count")
+                .filter(|c| *c > 0)
+                .and_then(|c| u32::try_from(c).ok())
+        });
+
+        Ok(BatteryHealthInfo {
+            health: ectool_health,
+            cycle_count,
+        })
+    }
+
     fn get_cpu_governor(&self) -> ServiceResult<String> {
         let output = Command::new("cpupower")
             .args(["frequency-info", "-p"])
@@ -354,6 +439,7 @@ pub struct MockBackend {
     pub governor_calls: Vec<String>,
     pub thermal_config_calls: Vec<ThermalConfig>,
     pub freq_calls: Vec<(Option<u32>, Option<u32>)>,
+    pub battery_health: BatteryHealthInfo,
 }
 
 impl Default for MockBackend {
@@ -367,6 +453,10 @@ impl Default for MockBackend {
             governor_calls: Vec::new(),
             thermal_config_calls: Vec::new(),
             freq_calls: Vec::new(),
+            battery_health: BatteryHealthInfo {
+                health: Some(85),
+                cycle_count: Some(42),
+            },
         }
     }
 }
@@ -412,6 +502,10 @@ impl HardwareBackend for MockBackend {
         Ok(self.battery_capacity)
     }
 
+    fn get_battery_health(&self) -> ServiceResult<BatteryHealthInfo> {
+        Ok(self.battery_health.clone())
+    }
+
     fn get_cpu_governor(&self) -> ServiceResult<String> {
         Ok(self.cpu_governor.clone())
     }
@@ -419,4 +513,17 @@ impl HardwareBackend for MockBackend {
     fn get_thermal_zones(&self) -> ServiceResult<Vec<ThermalZone>> {
         Ok(self.thermal_zones.clone())
     }
+}
+
+fn parse_ectool_number(text: &str, label: &str) -> Option<u64> {
+    text.lines()
+        .find(|l| l.contains(label))
+        .and_then(|l| {
+            let after_colon = l.split(':').nth(1);
+            let search = after_colon.unwrap_or(l);
+            search
+                .split_whitespace()
+                .find(|t| t.chars().all(|c| c.is_ascii_digit()))
+                .and_then(|n| n.parse().ok())
+        })
 }

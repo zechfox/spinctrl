@@ -52,6 +52,7 @@ impl StatusWriter {
         let hw = self.hardware.lock().await;
 
         let battery_capacity = hw.get_battery_capacity().unwrap_or(0);
+        let battery_health = hw.get_battery_health().unwrap_or_default();
         let ac_connected = hw.get_ac_status().unwrap_or(false);
         let cpu_governor = hw.get_cpu_governor().unwrap_or_else(|_| "unknown".to_string());
         let thermal_zones = hw.get_thermal_zones().unwrap_or_default();
@@ -74,6 +75,8 @@ impl StatusWriter {
                 charging,
                 threshold_active,
                 ac_connected,
+                health: battery_health.health,
+                cycle_count: battery_health.cycle_count,
             },
             power: shared::PowerStatus {
                 ac_connected,
