@@ -136,6 +136,29 @@ impl App {
                     }),
                 ),
             ]));
+            lines.push(Line::from(vec![
+                Span::raw("  Health:    "),
+                Span::styled(
+                    bat.health.map_or_else(|| "—".to_string(), |h| format!("{h}%")),
+                    Style::default().fg(match bat.health {
+                        Some(h) if h >= 80 => Color::Green,
+                        Some(h) if h >= 60 => Color::Yellow,
+                        Some(_) => Color::Red,
+                        None => Color::DarkGray,
+                    }),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw("  Cycles:    "),
+                Span::styled(
+                    bat.cycle_count.map_or_else(|| "—".to_string(), |c| c.to_string()),
+                    Style::default().fg(if bat.cycle_count.is_some() {
+                        Color::Cyan
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
+            ]));
         } else {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
