@@ -102,7 +102,11 @@ impl App {
             .iter()
             .map(|event| {
                 let tag = event_type_tag(&event.event_type);
-                let time_str = event.timestamp.format("%m-%d %H:%M:%S").to_string();
+                let time_str = event
+                    .timestamp
+                    .with_timezone(&chrono::Local)
+                    .format("%m-%d %H:%M:%S")
+                    .to_string();
                 let content = Line::from(vec![
                     Span::styled(
                         format!("{time_str} "),

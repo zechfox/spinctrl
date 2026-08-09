@@ -114,7 +114,11 @@ impl App {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            format!("PID {} · updated {}", status.service_pid, status.timestamp.format("%H:%M:%S")),
+            format!(
+                "PID {} · updated {}",
+                status.service_pid,
+                status.timestamp.with_timezone(&chrono::Local).format("%H:%M:%S")
+            ),
             Style::default().fg(Color::DarkGray),
         )));
 
