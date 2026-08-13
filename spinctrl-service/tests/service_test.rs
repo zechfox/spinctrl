@@ -124,3 +124,28 @@ fn test_mock_backend_thermal_zones() {
     let zones = mock.get_thermal_zones().unwrap();
     assert!(zones.is_empty());
 }
+
+#[test]
+fn test_mock_backend_thermal_zones_named() {
+    let mut mock = MockBackend::new();
+    mock.thermal_zones = vec![
+        shared::ThermalZone {
+            id: 0,
+            name: "Battery".into(),
+            temperature: 25,
+            trip_points: vec![],
+        },
+        shared::ThermalZone {
+            id: 2,
+            name: "CPU".into(),
+            temperature: 45,
+            trip_points: vec![],
+        },
+    ];
+    let zones = mock.get_thermal_zones().unwrap();
+    assert_eq!(zones.len(), 2);
+    assert_eq!(zones[0].id, 0);
+    assert_eq!(zones[0].name, "Battery");
+    assert_eq!(zones[1].id, 2);
+    assert_eq!(zones[1].name, "CPU");
+}

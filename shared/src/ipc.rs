@@ -74,6 +74,11 @@ pub struct ThermalStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThermalZone {
     pub id: u8,
+    /// EC temperature sensor name (e.g. "Battery", "Ambient", "CPU"). Empty
+    /// when the EC did not return a name. `#[serde(default)]` keeps older
+    /// status.json files (written before this field existed) deserializable.
+    #[serde(default)]
+    pub name: String,
     pub temperature: i32,
     pub trip_points: Vec<i32>,
 }

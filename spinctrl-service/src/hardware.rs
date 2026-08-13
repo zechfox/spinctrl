@@ -76,10 +76,14 @@ pub trait HardwareBackend: Send + 'static {
     /// # Errors
     /// Returns `Hardware` error if cpupower is unavailable.
     fn get_cpu_governor(&self) -> ServiceResult<String>;
-    /// Get thermal zone readings.
+    /// Get thermal zone readings from the EC via `ectool temps`.
+    ///
+    /// The returned sensor ids are the same EC zones that
+    /// `configure_thermal` writes thresholds to.
     ///
     /// # Errors
-    /// Returns `Hardware` error if the sysfs paths are unreadable.
+    /// Returns `Ok` with an empty vec when ectool is unavailable or its
+    /// output is unparseable.
     fn get_thermal_zones(&self) -> ServiceResult<Vec<ThermalZone>>;
 }
 
@@ -385,41 +389,31 @@ impl HardwareBackend for EctoolBackend {
     }
 
     fn get_thermal_zones(&self) -> ServiceResult<Vec<ThermalZone>> {
-        let mut zones = Vec::new();
-        let base = std::path::Path::new("/sys/class/thermal");
-        if !base.exists() {
-            return Ok(zones);
-        }
-        let Ok(entries) = fs::read_dir(base) else {
-            return Ok(zones);
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with("thermal_zone") {
-                continue;
+        // Read live temps from the EC; ids here match the zones that
+        // `configure_thermal` writes thresholds to (0..=2 on this board).
+        let output = match Command::new("ectool").arg("temps").output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+            _ => {
+                log::debug!("ectool temps unavailable; no thermal zones reported");
+                return Ok(Vec::new());
             }
-            let id: u8 = match name
-                .strip_prefix("thermal_zone")
-                .and_then(|s| s.parse().ok())
-            {
-                Some(id) => id,
-                None => continue,
-            };
-            let temp_path = path.join("temp");
-            let temperature = fs::read_to_string(&temp_path)
-                .map_or(0, |content| {
-                    content
-                        .trim()
-                        .parse::<i32>()
-                        .map_or(0, |v| v / 1000)
-                });
-            let trip_points = Vec::new();
+        };
+
+        let mut zones = Vec::new();
+        for (id, temp_c) in parse_ectool_temps(&output) {
+            let name = read_ectool_sensor_name(id);
             zones.push(ThermalZone {
                 id,
-                temperature,
-                trip_points,
+                name,
+                temperature: temp_c,
+                trip_points: Vec::new(),
             });
+        }
+        if zones.is_empty() && !output.trim().is_empty() {
+            log::warn!(
+                "ectool temps output did not parse; raw first line: {:?}",
+                output.lines().next().unwrap_or("")
+            );
         }
         Ok(zones)
     }
@@ -526,4 +520,117 @@ fn parse_ectool_number(text: &str, label: &str) -> Option<u64> {
                 .find(|t| t.chars().all(|c| c.is_ascii_digit()))
                 .and_then(|n| n.parse().ok())
         })
+}
+
+/// Parse `ectool temps` output into `(sensor_id, temp_celsius)` pairs.
+/// First integer token per line is the id, the second is the temp; values
+/// above 200 are Kelvin (EC memmap) and converted to Celsius. Lines with
+/// fewer than two integers are skipped.
+fn parse_ectool_temps(text: &str) -> Vec<(u8, i32)> {
+    text.lines()
+        .filter_map(|line| {
+            let nums = integer_tokens(line);
+            if nums.len() < 2 {
+                return None;
+            }
+            let id = u8::try_from(nums[0]).ok()?;
+            let raw = nums[1];
+            let temp_c = if raw > 200 { raw - 273 } else { raw };
+            Some((id, temp_c))
+        })
+        .collect()
+}
+
+fn parse_ectool_sensor_name(text: &str) -> String {
+    text.lines()
+        .find(|l| l.to_ascii_lowercase().contains("name"))
+        .and_then(|l| l.split_once(':'))
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Run `ectool tempsinfo <id>`; no cache because it's called ~once per
+/// sensor per 30 s status cycle.
+fn read_ectool_sensor_name(id: u8) -> String {
+    let id_str = id.to_string();
+    match Command::new("ectool").arg("tempsinfo").arg(&id_str).output() {
+        Ok(o) if o.status.success() => {
+            parse_ectool_sensor_name(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => String::new(),
+    }
+}
+
+fn integer_tokens(line: &str) -> Vec<i32> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    for ch in line.chars() {
+        if ch.is_ascii_digit() || (ch == '-' && cur.is_empty()) {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            if let Ok(n) = cur.parse::<i32>() {
+                tokens.push(n);
+            }
+            cur.clear();
+        }
+    }
+    if let Ok(n) = cur.parse::<i32>() {
+        tokens.push(n);
+    }
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_temps_kelvin_lines() {
+        let out = "Temperature sensor 0: 298 K\n\
+                   Temperature sensor 1: 305 K\n\
+                   Temperature sensor 2: 318 K\n";
+        assert_eq!(parse_ectool_temps(out), vec![(0, 25), (1, 32), (2, 45)]);
+    }
+
+    #[test]
+    fn parse_temps_celsius_lines() {
+        assert_eq!(
+            parse_ectool_temps("Sensor 0: 25 C\nSensor 1: 32 C\n"),
+            vec![(0, 25), (1, 32)]
+        );
+    }
+
+    #[test]
+    fn parse_temps_skips_header_and_blank() {
+        assert_eq!(
+            parse_ectool_temps("ID  Temperature\n\n0  298\n1  305\n"),
+            vec![(0, 25), (1, 32)]
+        );
+    }
+
+    #[test]
+    fn parse_temps_empty_when_unparseable() {
+        assert!(parse_ectool_temps("nothing useful here\n").is_empty());
+        assert!(parse_ectool_temps("").is_empty());
+    }
+
+    #[test]
+    fn parse_sensor_name_after_colon() {
+        assert_eq!(
+            parse_ectool_sensor_name("Sensor name: Battery\nSensor type: 1\n"),
+            "Battery"
+        );
+    }
+
+    #[test]
+    fn parse_sensor_name_missing() {
+        assert_eq!(parse_ectool_sensor_name("Sensor type: 1\n"), "");
+        assert_eq!(parse_ectool_sensor_name(""), "");
+    }
+
+    #[test]
+    fn integer_tokens_basic() {
+        assert_eq!(integer_tokens("Sensor 0: 298 K"), vec![0, 298]);
+        assert!(integer_tokens("no numbers here").is_empty());
+    }
 }
