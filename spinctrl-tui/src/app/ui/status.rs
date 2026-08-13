@@ -102,8 +102,13 @@ impl App {
             )));
             for zone in &thermal.zones {
                 let temp_color = zone_temp_color(zone.temperature);
+                let label = if zone.name.is_empty() {
+                    format!("  Zone {}: ", zone.id)
+                } else {
+                    format!("  Zone {} ({}): ", zone.id, zone.name)
+                };
                 lines.push(Line::from(vec![
-                    Span::raw(format!("  Zone {}: ", zone.id)),
+                    Span::raw(label),
                     Span::styled(
                         format!("{}°C", zone.temperature),
                         Style::default().fg(temp_color),
